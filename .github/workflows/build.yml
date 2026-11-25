@@ -1,14 +1,17 @@
 name: Build Billora APK
+
 on:
   workflow_dispatch:
     inputs:
       site_url:
         description: "Your Billora website URL (end with /)"
         required: true
+        type: string
         default: "https://bir001.github.io/Billora/"
   push:
     paths:
       - "android-src.zip"
+      - ".github/workflows/build.yml"
 
 permissions:
   contents: write
@@ -17,31 +20,53 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-java@v4
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
-      - uses: android-actions/setup-android@v3
-
-      - uses: gradle/actions/setup-gradle@v4
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.7"
 
-      - name: Unpack project
-        run: unzip -q android-src.zip -d src
-
-      - name: Build APK
-        working-directory: src
+      - name: Unpack Android project
         run: |
-          gradle assembleRelease --no-daemon \
-            -PsiteUrl="${{ inputs.site_url || 'https://bir001.github.io/Billora/' }}"
+          mkdir -p src
+          unzip -q android-src.zip -d src
 
-      - name: Publish APK
+      - name: Build release APK
+        working-directory: src
+        env:
+          SITE_URL: ${{ inputs.site_url || 'https://bir001.github.io/Billora/' }}
+        run: |
+          gradle --no-daemon --stacktrace assembleRelease "-PsiteUrl=$SITE_URL"
+
+      - name: Rename APK to Billora.apk
+        run: |
+          set -euo pipefail
+          APK_PATH="$(find src/app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' ! -name 'Billora.apk' | head -n 1)"
+          test -n "$APK_PATH"
+          cp "$APK_PATH" src/app/build/outputs/apk/release/Billora.apk
+          test -s src/app/build/outputs/apk/release/Billora.apk
+          ls -lh src/app/build/outputs/apk/release/Billora.apk
+
+      - name: Upload APK as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Billora-Android-APK
+          path: src/app/build/outputs/apk/release/Billora.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish APK release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: apk-${{ github.run_number }}
           name: Billora APK ${{ github.run_number }}
-          files: src/app/build/outputs/apk/release/*.apk
+          make_latest: true
+          files: src/app/build/outputs/apk/release/Billora.apk
